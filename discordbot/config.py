@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -22,21 +23,18 @@ class Config:
     """Validated runtime configuration."""
 
     discord_bot_token: str
-    rag_api_url: str
     discord_guild_id: int | None
 
 
 def load_config() -> Config:
     """Load and validate configuration from the environment and a .env file."""
-    load_dotenv()
+    load_dotenv(Path(__file__).resolve().parent / ".env")
 
     discord_bot_token = os.getenv("DISCORD_BOT_TOKEN", "").strip()
-    rag_api_url = os.getenv("RAG_API_URL", "").strip()
     missing = [
         name
         for name, value in (
             ("DISCORD_BOT_TOKEN", discord_bot_token),
-            ("RAG_API_URL", rag_api_url),
         )
         if not value
     ]
@@ -58,6 +56,5 @@ def load_config() -> Config:
 
     return Config(
         discord_bot_token=discord_bot_token,
-        rag_api_url=rag_api_url,
         discord_guild_id=guild_id,
     )

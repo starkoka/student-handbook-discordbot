@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
+from pathlib import Path
 
 import discord
 from discord import app_commands
+from openai import APIConnectionError, APITimeoutError
 
 from config import Config, ConfigError, load_config
 from formatter import format_response, split_message
-from rag_client import (
-    RagClient,
-    RagConnectionError,
-    RagResponseError,
-    RagTimeoutError,
-)
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from RAG.GenResponce import gen_response
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +29,8 @@ CONNECTION_ERROR_MESSAGE = (
 TIMEOUT_ERROR_MESSAGE = (
     "回答生成がタイムアウトしました。しばらくしてから再度実行してください。"
 )
-RESPONSE_ERROR_MESSAGE = "RAGサーバーから不正な応答が返されました。"
 UNEXPECTED_ERROR_MESSAGE = "処理中に予期しないエラーが発生しました。"
+RESPONSE_TIMEOUT_SECONDS = 120
 
 
 class HandbookBot(discord.Client):
@@ -37,7 +40,6 @@ class HandbookBot(discord.Client):
         super().__init__(intents=discord.Intents.default())
         self.tree = app_commands.CommandTree(self)
         self._guild_id = config.discord_guild_id
-        self._rag_client = RagClient(config.rag_api_url)
         self._register_commands()
 
     def _register_commands(self) -> None:
@@ -61,22 +63,22 @@ class HandbookBot(discord.Client):
 
             await interaction.response.defer(thinking=True)
             try:
-                response = await self._rag_client.query(normalized_question)
-                message = format_response(response.answer, response.sources)
+                answer = await asyncio.wait_for(
+                    asyncio.to_thread(gen_response, normalized_question),
+                    timeout=RESPONSE_TIMEOUT_SECONDS,
+                )
+                message = format_response(answer, [])
                 for chunk in split_message(message):
                     await interaction.followup.send(
                         chunk,
                         allowed_mentions=discord.AllowedMentions.none(),
                     )
-            except RagConnectionError:
-                logger.warning("Command failed because the RAG API was unreachable")
+            except APIConnectionError:
+                logger.warning("Command failed because vLLM was unreachable")
                 await self._send_error(interaction, CONNECTION_ERROR_MESSAGE)
-            except RagTimeoutError:
-                logger.warning("Command failed because the RAG API timed out")
+            except (TimeoutError, APITimeoutError):
+                logger.warning("Command failed because response generation timed out")
                 await self._send_error(interaction, TIMEOUT_ERROR_MESSAGE)
-            except RagResponseError:
-                logger.warning("Command failed because the RAG response was invalid")
-                await self._send_error(interaction, RESPONSE_ERROR_MESSAGE)
             except Exception:
                 logger.exception("Unexpected error while processing /handbook")
                 await self._send_error(interaction, UNEXPECTED_ERROR_MESSAGE)
@@ -113,13 +115,6 @@ class HandbookBot(discord.Client):
     async def on_ready(self) -> None:
         """Log successful Discord authentication without exposing credentials."""
         logger.info("Discord login succeeded: user=%s user_id=%s", self.user, self.user.id)
-
-    async def close(self) -> None:
-        """Close both Discord and the reusable RAG HTTP client."""
-        logger.info("Bot is shutting down")
-        await self._rag_client.aclose()
-        await super().close()
-
 
 def main() -> None:
     """Load configuration and run the Discord bot."""

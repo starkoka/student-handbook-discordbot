@@ -77,4 +77,5 @@ def gen_response(query: str):
     return call_llm(prompt)
 
 
-print(gen_response("卒業の条件を教えて"))
+if __name__ == "__main__":
+    print(gen_response("卒業の条件を教えて"))
