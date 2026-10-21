@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 import os
 import signal
 import subprocess
@@ -17,6 +19,56 @@ VLLM_PORT = 8000
 MODEL = os.getenv("VLLM_MODEL", "Qwen/Qwen3-8B")
 SERVED_MODEL_NAME = "Qwen/Qwen3-8B"
 STARTUP_TIMEOUT = int(os.getenv("VLLM_STARTUP_TIMEOUT", "600"))
+
+
+def gpu_memory_utilization(environment: dict[str, str]) -> str:
+    """Budget logical cuda:0, probing in a child to release its CUDA context."""
+    setting = environment.get("VLLM_GPU_MEMORY_UTILIZATION", "auto").strip()
+    if setting != "auto":
+        try:
+            value = float(setting)
+        except ValueError as exc:
+            raise ValueError("VLLM_GPU_MEMORY_UTILIZATIONはautoまたは0より大きく1以下の数値です") from exc
+        if not math.isfinite(value) or not 0 < value <= 1:
+            raise ValueError("VLLM_GPU_MEMORY_UTILIZATIONはautoまたは0より大きく1以下の数値です")
+        return str(value)
+
+    reserve_gib = float(environment.get("VLLM_GPU_MEMORY_RESERVE_GIB", "2"))
+    if not math.isfinite(reserve_gib) or reserve_gib < 0:
+        raise ValueError("VLLM_GPU_MEMORY_RESERVE_GIBには0以上の有限の数値を指定してください")
+    try:
+        result = subprocess.run(
+            [
+                sys.executable, "-c",
+                "import json, torch; print(json.dumps(torch.cuda.mem_get_info(0)))",
+            ],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=60,
+        )
+        free, total = json.loads(result.stdout)
+        if not 0 <= free <= total or total <= 0:
+            raise ValueError("Invalid GPU memory information")
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError) as exc:
+        raise RuntimeError(
+            "GPU空きメモリを取得できませんでした。CUDA環境を確認するか、"
+            "VLLM_GPU_MEMORY_UTILIZATIONに利用率を明示してください。"
+            f" 詳細: {getattr(exc, 'stderr', None) or exc}"
+        ) from exc
+
+    # Round down so formatting cannot raise the budget above available memory.
+    value = math.floor(min(0.90, (free - reserve_gib * 1024**3) / total) * 1000) / 1000
+    if value <= 0:
+        raise RuntimeError("GPU空きメモリが予約分以下です。GPUの使用状況を確認してください。")
+    print(
+        f"[launcher] cuda:0 空き={free / 1024**3:.2f} GiB / "
+        f"全体={total / 1024**3:.2f} GiB、余裕={reserve_gib:.2f} GiB、"
+        f"gpu-memory-utilization={value:.3f}",
+        flush=True,
+    )
+    return f"{value:.3f}"
 
 
 def wait_until_ready(url: str, process: subprocess.Popen[bytes]) -> None:
@@ -62,6 +114,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop)
 
     try:
+        utilization = gpu_memory_utilization(environment)
         print(f"[launcher] vLLMを起動しています: {MODEL}", flush=True)
         processes.append(
             subprocess.Popen(
@@ -77,6 +130,8 @@ def main() -> None:
                     HOST,
                     "--port",
                     str(VLLM_PORT),
+                    "--gpu-memory-utilization",
+                    utilization,
                 ],
                 cwd=ROOT,
                 env=environment,
