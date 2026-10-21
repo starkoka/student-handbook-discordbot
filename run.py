@@ -141,12 +141,16 @@ def main() -> None:
             f"http://{HOST}:{VLLM_PORT}/v1/models", processes[0]
         )
 
-        print("[launcher] Discord Botを起動します", flush=True)
+        # Hide CUDA only from the bot: its embedding model otherwise competes
+        # with vLLM for GPU memory. vLLM keeps the original environment.
+        bot_environment = environment.copy()
+        bot_environment["CUDA_VISIBLE_DEVICES"] = "-1"
+        print("[launcher] Discord Botを起動します（埋め込みモデル: CPU）", flush=True)
         processes.append(
             subprocess.Popen(
                 [python, "discordbot/bot.py"],
                 cwd=ROOT,
-                env=environment,
+                env=bot_environment,
             )
         )
 

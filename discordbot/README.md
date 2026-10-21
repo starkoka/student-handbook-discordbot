@@ -12,6 +12,10 @@ Discord Botは`RAG/GenResponce.py`の`gen_response()`を直接呼び出します
 生成数を増やすとLLMの呼び出し回数が増え、120秒の回答待ち時間を超える場合があります。
 
 `python run.py` での統合起動では、GPU利用率を起動時の空き容量から自動計算します。
+vLLMはGPUを使用し、Discord Botの埋め込みモデルはCPUで実行します。
+Bot子プロセスにのみ `CUDA_VISIBLE_DEVICES=-1` を設定して、GPUメモリの競合を防ぎます。
+Botを単体起動する場合も同じ動作にするには、
+`CUDA_VISIBLE_DEVICES=-1 python discordbot/bot.py` を使用してください。
 `(空き容量 − 2 GiB) / GPU全体容量` を小数点以下3桁で切り捨て、上限を `0.90` とします。
 `CUDA_VISIBLE_DEVICES` を反映した `cuda:0` を別プロセスのPyTorchで調べます。
 取得に失敗した場合は理由を表示して終了します。

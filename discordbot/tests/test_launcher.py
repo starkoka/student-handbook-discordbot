@@ -78,3 +78,24 @@ def test_main_passes_budget_to_vllm(monkeypatch):
         launcher.main()
     command = spawn.call_args.args[0]
     assert command[command.index("--gpu-memory-utilization") + 1] == "0.707"
+
+
+def test_main_hides_cuda_only_from_bot(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2")
+    monkeypatch.setattr(launcher, "gpu_memory_utilization", lambda env: "0.707")
+    monkeypatch.setattr(launcher.signal, "signal", Mock())
+    vllm = Mock()
+    vllm.poll.return_value = None
+    bot = Mock()
+    bot.poll.return_value = 1
+    spawn = Mock(side_effect=[vllm, bot])
+    monkeypatch.setattr(launcher.subprocess, "Popen", spawn)
+    monkeypatch.setattr(launcher, "terminate_all", Mock())
+    monkeypatch.setattr(launcher, "wait_until_ready", Mock())
+
+    with pytest.raises(RuntimeError, match="子プロセスが終了"):
+        launcher.main()
+
+    assert spawn.call_args_list[0].kwargs["env"]["CUDA_VISIBLE_DEVICES"] == "2"
+    assert spawn.call_args_list[1].kwargs["env"]["CUDA_VISIBLE_DEVICES"] == "-1"
+    assert launcher.os.environ["CUDA_VISIBLE_DEVICES"] == "2"
