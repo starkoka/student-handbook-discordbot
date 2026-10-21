@@ -47,10 +47,14 @@ class HandbookBot(discord.Client):
             name="handbook",
             description="学生便覧について質問します",
         )
-        @app_commands.describe(question="学生便覧について知りたいこと")
+        @app_commands.describe(
+            question="学生便覧について知りたいこと",
+            hyde_sample="HyDEの生成数（0: 無効、1〜10: 生成数、省略時: 1）",
+        )
         async def handbook(
             interaction: discord.Interaction,
             question: str,
+            hyde_sample: app_commands.Range[int, 0, 10] = 1,
         ) -> None:
             normalized_question = question.strip()
             if not normalized_question or len(normalized_question) > 500:
@@ -64,7 +68,9 @@ class HandbookBot(discord.Client):
             await interaction.response.defer(thinking=True)
             try:
                 answer = await asyncio.wait_for(
-                    asyncio.to_thread(gen_response, normalized_question),
+                    asyncio.to_thread(
+                        gen_response, normalized_question, hyde_sample=hyde_sample
+                    ),
                     timeout=RESPONSE_TIMEOUT_SECONDS,
                 )
                 message = format_response(answer, [])

@@ -15,12 +15,7 @@ llm_client = OpenAI(
     api_key="dummy",
 )
 
-def search(query: str, chunks: list[dict], chunk_embeddings, model, top_k: int = 5):
-    query_embedding = model.encode(
-        "query: " + query,
-        normalize_embeddings=True,
-    )
-
+def search(query_embedding: np.ndarray, chunks: list[dict], chunk_embeddings, top_k: int = 5):
     scores = chunk_embeddings @ query_embedding
     topk_idx = np.argsort(scores)[-top_k:][::-1]
 
@@ -71,8 +66,28 @@ def call_llm(prompt: str) -> str:
 
     return answer.strip()
 
-def gen_response(query: str):
-    search_results = search(query, student_handbook_chunks, chunk_embeddings, model)
+def make_hyde_embedding(query: str, hyde_sample: int = 1) -> np.ndarray:
+    hyde_embedding = 0
+    for i in range(hyde_sample):
+        hyde_prompt = f"以下の質問の回答となりうる，それらしい情報源を生成してください．\n質問: {query}"
+        hyde_answer = call_llm(hyde_prompt)
+        hyde_embedding += model.encode(
+            "query: " + hyde_answer,
+            normalize_embeddings=True,
+        )
+    return hyde_embedding / hyde_sample
+
+def gen_response(query: str, hyde_sample: int = 1):
+    if hyde_sample == 0:
+        query_embedding = model.encode(
+            "query: " + query,
+            normalize_embeddings=True,
+        )
+    else:
+        query_embedding = make_hyde_embedding(query, hyde_sample)
+
+
+    search_results = search(query_embedding, student_handbook_chunks, chunk_embeddings)
     prompt = make_prompt(search_results, query)
     return call_llm(prompt)
 
